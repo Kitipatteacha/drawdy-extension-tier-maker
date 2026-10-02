@@ -1,0 +1,9 @@
+{
+  "driverId": "drawdy.tiermaker",
+  "driverName": "Tier Maker",
+  "driverVersion": "0.1.0",
+  "description": "Build tier lists on the board: design the rows, drop in images, and drag anything onto a tier to have it snap into place.",
+  "main": "main.js",
+  "icon": "assets/tiermaker.svg",
+  "permissions": ["dom", "scene", "storage"]
+}
