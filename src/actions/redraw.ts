@@ -3,18 +3,11 @@ import { DrawdyElementSchema } from "@drawdy/driver-protocol";
 import { SceneTable } from "../table/collect";
 import { TableConfig } from "../table/config";
 import { buildTableElements, imageElement } from "../table/draw";
-import {
-  LaidTable,
-  layoutTable,
-  moved,
-  near,
-  PlacedItem,
-  Point,
-} from "../table/layout";
+import { LaidTable, layoutTable, near, PlacedItem, Point } from "../table/layout";
 import {
   addElements,
-  placeElements,
-  Placement,
+  Move,
+  moveElements,
   removeElements,
 } from "../drawdy-bridge/scene";
 import { newElementId } from "../drawdy-bridge/session";
@@ -46,25 +39,6 @@ type Redraw = {
 
 export type Redrawn = { partIds: string[] };
 
-/**
- * The geometry change that takes an item from where the board has it to
- * where the layout wants it, or null when it is already there.
- */
-function placementFor(item: PlacedItem, was: PlacedItem): Placement | null {
-  const placement: Placement = { id: item.id };
-  if (moved(item.x - was.x, item.y - was.y)) {
-    placement.x = item.x;
-    placement.y = item.y;
-  }
-  if (moved(item.width - was.width, item.height - was.height)) {
-    placement.width = item.width;
-    placement.height = item.height;
-  }
-  return placement.x === undefined && placement.width === undefined
-    ? null
-    : placement;
-}
-
 async function redraw(r: Redraw): Promise<Redrawn | null> {
   const laid = layoutTable(r.config, r.origin, r.itemsByRow);
 
@@ -79,7 +53,7 @@ async function redraw(r: Redraw): Promise<Redrawn | null> {
   }
 
   const created: DrawdyElementSchema[] = [];
-  const placements: Placement[] = [];
+  const moves: Move[] = [];
   for (const row of laid.rows) {
     for (const item of row.items) {
       const source = r.pending?.get(item.id);
@@ -88,9 +62,7 @@ async function redraw(r: Redraw): Promise<Redrawn | null> {
         continue;
       }
       const was = onBoard.get(item.id);
-      if (!was) continue;
-      const placement = placementFor(item, was);
-      if (placement) placements.push(placement);
+      if (was) moves.push({ id: item.id, dx: item.x - was.x, dy: item.y - was.y });
     }
   }
 
@@ -106,8 +78,9 @@ async function redraw(r: Redraw): Promise<Redrawn | null> {
   if (adding.length > 0 && !(await addElements(adding))) return null;
   if (rebuilt) await removeElements(r.oldPartIds);
 
-  // Every move and resize rides in one update, so it lands as one undo step.
-  if (!(await placeElements(placements))) return null;
+  // update-drawdy-elements ignores geometry, so items move through a
+  // committed preview, which also lands as one undo step.
+  await moveElements(moves);
   return {
     partIds: rebuilt ? parts.map((part) => part.drawdyElementId) : r.oldPartIds,
   };

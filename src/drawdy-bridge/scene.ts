@@ -146,30 +146,6 @@ export async function moveElements(moves: Move[]): Promise<void> {
   });
 }
 
-/** A new place and/or size for an element; fields left out stay as they are. */
-export type Placement = {
-  id: string;
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-};
-
-/**
- * Applies every placement in one `update-drawdy-elements`, so however many
- * items move or resize, the board records a single undo step.
- */
-export async function placeElements(placements: Placement[]): Promise<boolean> {
-  if (placements.length === 0) return true;
-  const res = await command("command:scene:update-drawdy-elements", {
-    updates: placements.map(({ id, ...geometry }) => ({
-      drawdyElementId: id,
-      properties: geometry,
-    })),
-  });
-  return res !== null;
-}
-
 export async function tagItems(tags: Tag[]): Promise<void> {
   if (tags.length === 0) return;
   await command("command:scene:update-drawdy-elements", {
