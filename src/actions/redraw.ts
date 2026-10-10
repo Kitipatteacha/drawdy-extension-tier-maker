@@ -3,102 +3,110 @@ import { DrawdyElementSchema } from "@drawdy/driver-protocol";
 import { SceneTable } from "../table/collect";
 import { TableConfig } from "../table/config";
 import { buildTableElements, imageElement } from "../table/draw";
-import { LaidTable, layoutTable, near, PlacedItem, Point } from "../table/layout";
 import {
-  addElements,
-  Move,
-  moveElements,
-  removeElements,
+  layoutTable,
+  moved,
+  near,
+  PlacedItem,
+  Rect,
+} from "../table/layout";
+import {
+  commitEdit,
+  Placement,
+  SceneEdit,
+  Tag,
 } from "../drawdy-bridge/scene";
-import { newElementId } from "../drawdy-bridge/session";
 
-function structureMatches(table: SceneTable, laid: LaidTable): boolean {
-  if (table.bands.length !== laid.rows.length) return false;
-  return laid.rows.every((row, i) => {
-    const band = table.bands[i];
-    return (
-      band.rowId === row.rowId &&
-      near(band.rect.x, row.bandRect.x) &&
-      near(band.rect.y, row.bandRect.y) &&
-      near(band.rect.height, row.bandRect.height) &&
-      near(band.rect.width, row.bandRect.width)
-    );
-  });
-}
-
-type Redraw = {
-  tableId: string;
-  config: TableConfig;
-  origin: Point;
-  itemsByRow: Map<string, PlacedItem[]>;
-  oldPartIds: string[];
-  previous?: SceneTable;
-  force?: boolean;
+type Changes = {
+  config?: TableConfig;
   pending?: Map<string, { blob: Blob }>;
 };
 
-export type Redrawn = { partIds: string[] };
+export type Redrawn = { partIds: string[]; edit: SceneEdit };
 
-async function redraw(r: Redraw): Promise<Redrawn | null> {
-  const laid = layoutTable(r.config, r.origin, r.itemsByRow);
+const sameRect = (a: Rect, b: Rect): boolean =>
+  near(a.x, b.x) &&
+  near(a.y, b.y) &&
+  near(a.width, b.width) &&
+  near(a.height, b.height);
+
+/**
+ * What redrawing the table would change, without touching the board. Parts
+ * keep their id while only their geometry changes, so a row growing or
+ * shifting is moved and resized in place; only a new row, or new text on
+ * one, is drawn fresh.
+ */
+export function planTable(
+  table: SceneTable,
+  itemsByRow: Map<string, PlacedItem[]>,
+  changes: Changes = {},
+): Redrawn {
+  const config = changes.config ?? table.config;
+  const laid = layoutTable(config, table.origin, itemsByRow);
 
   // Where the board has each item now: the last scan when we have one, else
   // the geometry the caller handed in.
   const onBoard = new Map<string, PlacedItem>();
-  for (const items of r.itemsByRow.values()) {
+  for (const items of itemsByRow.values()) {
     for (const item of items) onBoard.set(item.id, item);
   }
-  for (const items of r.previous?.items.values() ?? []) {
+  for (const items of table.items.values()) {
     for (const item of items) onBoard.set(item.id, item);
   }
 
-  const created: DrawdyElementSchema[] = [];
-  const moves: Move[] = [];
+  const add: DrawdyElementSchema[] = [];
+  const placements: Placement[] = [];
   for (const row of laid.rows) {
     for (const item of row.items) {
-      const source = r.pending?.get(item.id);
+      const source = changes.pending?.get(item.id);
       if (source) {
-        created.push(imageElement(r.tableId, item, row.rowId, source.blob));
+        add.push(imageElement(table.tableId, item, row.rowId, source.blob));
         continue;
       }
       const was = onBoard.get(item.id);
-      if (was) moves.push({ id: item.id, dx: item.x - was.x, dy: item.y - was.y });
+      if (was && moved(item.x - was.x, item.y - was.y)) {
+        placements.push({ id: item.id, x: item.x, y: item.y });
+      }
     }
   }
 
-  const rebuilt =
-    r.force === true ||
-    r.previous === undefined ||
-    !structureMatches(r.previous, laid);
+  const parts = buildTableElements(table.tableId, config, laid);
+  for (const part of parts) {
+    const at = table.partRects.get(part.drawdyElementId);
+    if (!at) {
+      add.push(part);
+      continue;
+    }
+    // The title's id holds its geometry, so finding it means it fits.
+    if (part.type !== "shape") continue;
+    const { x, y, width = at.width, height = at.height } = part;
+    if (!sameRect(at, { x, y, width, height })) {
+      placements.push({ id: part.drawdyElementId, x, y, width, height });
+    }
+  }
 
-  const parts = rebuilt
-    ? buildTableElements(r.tableId, r.config, laid, newElementId)
-    : [];
-  const adding = [...parts, ...created];
-  if (adding.length > 0 && !(await addElements(adding))) return null;
-  if (rebuilt) await removeElements(r.oldPartIds);
-
-  // update-drawdy-elements ignores geometry, so items move through a
-  // committed preview, which also lands as one undo step.
-  await moveElements(moves);
+  // Anything else is a part this layout no longer has: a deleted row, old
+  // text, or a row drawn twice by two drivers at once.
+  const partIds = parts.map((part) => part.drawdyElementId);
+  const keep = new Set(partIds);
   return {
-    partIds: rebuilt ? parts.map((part) => part.drawdyElementId) : r.oldPartIds,
+    partIds,
+    edit: {
+      add,
+      tags: [],
+      placements,
+      remove: table.partIds.filter((id) => !keep.has(id)),
+    },
   };
 }
 
-export function redrawTable(
+/** Redraws the table, along with any retags, as one action. */
+export async function redrawTable(
   table: SceneTable,
   itemsByRow: Map<string, PlacedItem[]>,
-  changes: Partial<Pick<Redraw, "config" | "force" | "pending">> = {},
+  changes: Changes = {},
+  tags: Tag[] = [],
 ): Promise<Redrawn | null> {
-  return redraw({
-    tableId: table.tableId,
-    config: changes.config ?? table.config,
-    origin: table.origin,
-    itemsByRow,
-    oldPartIds: table.partIds,
-    previous: table,
-    force: changes.force,
-    pending: changes.pending,
-  });
+  const plan = planTable(table, itemsByRow, changes);
+  return (await commitEdit({ ...plan.edit, tags })) ? plan : null;
 }

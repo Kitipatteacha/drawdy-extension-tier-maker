@@ -227,7 +227,6 @@ footer {
             <span>or click to choose files &mdash; they land in the pool, or loose on the canvas if there is no tier list yet.</span>
             <input type="file" id="files" accept="image/*" multiple />
         </label>
-        <button class="ghost" id="normalize" type="button" disabled>Fit images to image height</button>
         <button class="ghost" id="reset" type="button" disabled>Send everything back to the pool</button>
     </section>
 </main>
@@ -261,8 +260,7 @@ footer {
     var state = {
         config: clone(CONFIG.fallback),
         tableId: null,
-        counts: {},
-        busy: false
+        counts: {}
     };
     var saveTimer = null;
     var statusTimer = null;
@@ -380,7 +378,6 @@ footer {
         state.tableId = tableId;
         state.counts = counts || {};
         placeBtn.textContent = tableId === null ? "Create Table" : "Update Table";
-        $("normalize").disabled = tableId === null;
         $("reset").disabled = tableId === null;
     }
 
@@ -401,7 +398,6 @@ footer {
     /* ---- placing and editing ---------------------------------------- */
 
     function place() {
-        if (state.busy) return;
         if (state.tableId !== null) {
             api.postMessage({ type: "update", tableId: state.tableId, config: state.config });
         } else {
@@ -410,9 +406,6 @@ footer {
     }
 
     placeBtn.addEventListener("click", place);
-    $("normalize").addEventListener("click", function () {
-        api.postMessage({ type: "normalize", tableId: state.tableId });
-    });
     $("reset").addEventListener("click", function () {
         api.postMessage({ type: "reset", tableId: state.tableId });
     });
@@ -524,11 +517,6 @@ footer {
             renderRows();
         } else if (raw.type === "status") {
             say(raw.text, raw.tone);
-        } else if (raw.type === "busy") {
-            state.busy = !!raw.busy;
-            placeBtn.disabled = state.busy;
-            $("normalize").disabled = state.busy || state.tableId === null;
-            $("reset").disabled = state.busy || state.tableId === null;
         }
     });
 

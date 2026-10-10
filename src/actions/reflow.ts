@@ -8,6 +8,12 @@ import { readMeta } from "../table/meta";
 
 const dirty = new Set<string>();
 
+let selected = new Set<string>();
+
+export function noteSelection(ids: readonly string[]): void {
+  selected = new Set(ids);
+}
+
 const SETTLE_MS = 500;
 let settle: ReturnType<typeof setTimeout> | null = null;
 
@@ -21,11 +27,16 @@ export function noteUpdated(
     if (typeof element.width !== "number") continue;
     if (typeof element.height !== "number") continue;
 
+    // Every collaborator's driver hears every update. Only the one whose user
+    // has the item selected, the one holding its resize handles, reflows it,
+    // so a resize redraws the table once rather than once per person.
+    if (!selected.has(element.id)) continue;
+
+    // An item this driver never measured is news, not a resize.
     const was = knownSize(element.id);
     if (
-      was &&
-      near(was.width, element.width) &&
-      near(was.height, element.height)
+      !was ||
+      (near(was.width, element.width) && near(was.height, element.height))
     ) {
       continue;
     }

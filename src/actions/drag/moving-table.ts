@@ -1,4 +1,4 @@
-import { moveElements, scanScene } from "../../drawdy-bridge/scene";
+import { commitEdit, emptyEdit, scanScene } from "../../drawdy-bridge/scene";
 import { moved, Point } from "../../table/layout";
 import type { DragMachine } from "./machine";
 import { DragState } from "./state";
@@ -30,9 +30,10 @@ export class MovingTable extends DragState {
     const dy = after.y - before.y;
     if (!moved(dx, dy)) return;
 
-    const rest = [...table.rowOfItem.keys()].filter(
-      (id) => !from.has(id) && scene.geo.has(id),
-    );
-    await moveElements(rest.map((id) => ({ id, dx, dy })));
+    const rest = [...table.rowOfItem.keys()].flatMap((id) => {
+      const at = scene.geo.get(id);
+      return at && !from.has(id) ? [{ id, x: at.x + dx, y: at.y + dy }] : [];
+    });
+    await commitEdit({ ...emptyEdit(), placements: rest });
   }
 }

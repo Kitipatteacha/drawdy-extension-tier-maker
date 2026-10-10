@@ -10,6 +10,7 @@ export type SceneTable = {
   config: TableConfig;
   origin: Point;
   partIds: string[];
+  partRects: Map<string, Rect>;
   items: Map<string, PlacedItem[]>;
   rowOfItem: Map<string, string>;
   bands: { rowId: string; rect: Rect }[];
@@ -46,6 +47,7 @@ export function collectTables(
     title: SubscribedDrawdyElement | null;
     labels: (SubscribedDrawdyElement & { rowId: string })[];
     partIds: string[];
+    partRects: Map<string, Rect>;
     cfg: TableScalars | null;
     items: { rowId: string; geo: PlacedItem }[];
   };
@@ -57,7 +59,14 @@ export function collectTables(
     if (!meta) continue;
     let draft = drafts.get(meta.tableId);
     if (!draft) {
-      draft = { title: null, labels: [], partIds: [], cfg: null, items: [] };
+      draft = {
+        title: null,
+        labels: [],
+        partIds: [],
+        partRects: new Map(),
+        cfg: null,
+        items: [],
+      };
       drafts.set(meta.tableId, draft);
     }
     if (meta.part === "item") {
@@ -66,6 +75,8 @@ export function collectTables(
       continue;
     }
     draft.partIds.push(element.id);
+    const rect = placedOf(element);
+    if (rect) draft.partRects.set(element.id, rect);
     if (meta.cfg && !draft.cfg) draft.cfg = meta.cfg;
     if (meta.part === "title") draft.title = element;
     if (meta.part === "label") {
@@ -76,9 +87,17 @@ export function collectTables(
   const tables = new Map<string, SceneTable>();
 
   for (const [tableId, draft] of drafts) {
+    // Two drivers rebuilding at once can leave a row drawn twice. Read each
+    // row once so the copy never becomes a tier of its own.
+    const seenRows = new Set<string>();
     const labels = draft.labels
       .filter((label) => typeof label.y === "number")
-      .sort((a, b) => (a.y ?? 0) - (b.y ?? 0));
+      .sort((a, b) => (a.y ?? 0) - (b.y ?? 0))
+      .filter((label) => {
+        if (seenRows.has(label.rowId)) return false;
+        seenRows.add(label.rowId);
+        return true;
+      });
     if (labels.length === 0) continue;
 
     const cfg = draft.cfg ?? readScalars({})!;
@@ -116,6 +135,7 @@ export function collectTables(
       config,
       origin,
       partIds: draft.partIds,
+      partRects: draft.partRects,
       items,
       rowOfItem,
       bands: labels.map((label) => ({

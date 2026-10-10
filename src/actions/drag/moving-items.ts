@@ -1,10 +1,12 @@
-import { redrawTable } from "../redraw";
+import { planTable } from "../redraw";
 import {
   bandAt,
+  commitEdit,
+  mergeEdits,
   Scene,
   scanScene,
+  SceneEdit,
   Tag,
-  tagItems,
 } from "../../drawdy-bridge/scene";
 import { SceneTable } from "../../table/collect";
 import { POOL_ROW_ID } from "../../table/config";
@@ -38,17 +40,18 @@ function landingsOf(scene: Scene, ids: string[]): Landing[] {
   const structural = new Set(
     [...scene.tables.values()].flatMap((table) => table.partIds),
   );
+  const images = new Set(
+    scene.elements.filter((el) => el.type === "image").map((el) => el.id),
+  );
   const landings: Landing[] = [];
   for (const id of ids) {
     if (structural.has(id)) continue;
     const geo = scene.geo.get(id);
     if (!geo) continue;
     const was = filedUnder(scene, id);
-    const hit = bandAt(
-      scene.tables,
-      geo.x + geo.width / 2,
-      geo.y + geo.height / 2,
-    );
+    const hit = images.has(id)
+      ? bandAt(scene.tables, geo.x + geo.width / 2, geo.y + geo.height / 2)
+      : null;
 
     const redirected =
       was === null && hit !== null && hit.rowId !== POOL_ROW_ID;
@@ -68,7 +71,9 @@ const retagsFor = (landings: Landing[]): Tag[] =>
       rowId: landing.now?.rowId ?? null,
     }));
 
-async function refile(table: SceneTable, landings: Landing[]): Promise<void> {
+type Refiled = { tableId: string; itemsByRow: Map<string, PlacedItem[]> };
+
+function refile(table: SceneTable, landings: Landing[]): Refiled {
   const lifted = new Set(landings.map((landing) => landing.id));
   const itemsByRow = new Map<string, PlacedItem[]>();
   for (const [rowId, items] of table.items) {
@@ -84,8 +89,7 @@ async function refile(table: SceneTable, landings: Landing[]): Promise<void> {
     list.splice(redirected ? list.length : insertionIndex(list, geo), 0, geo);
     itemsByRow.set(now.rowId, list);
   }
-  await redrawTable(table, itemsByRow);
-  postCounts(table.tableId, itemsByRow);
+  return { tableId: table.tableId, itemsByRow };
 }
 
 export class MovingItems extends DragState {
@@ -102,16 +106,28 @@ export class MovingItems extends DragState {
 
     const landings = landingsOf(scene, this.ids);
     if (landings.length === 0) return;
-    await tagItems(retagsFor(landings));
 
     const touched = new Set<string>();
     for (const { was, now } of landings) {
       if (was) touched.add(was.tableId);
       if (now) touched.add(now.tableId);
     }
+
+    // Every table the drop touched lands in the same commit, so ranking an
+    // image across two lists is still one undo.
+    const refiled: Refiled[] = [];
+    const edits: SceneEdit[] = [];
     for (const tableId of touched) {
       const table = scene.tables.get(tableId);
-      if (table) await refile(table, landings);
+      if (!table) continue;
+      const next = refile(table, landings);
+      refiled.push(next);
+      edits.push(planTable(table, next.itemsByRow).edit);
+    }
+    const edit = { ...mergeEdits(edits), tags: retagsFor(landings) };
+    if (!(await commitEdit(edit))) return;
+    for (const { tableId, itemsByRow } of refiled) {
+      postCounts(tableId, itemsByRow);
     }
   }
 }

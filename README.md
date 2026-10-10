@@ -82,7 +82,8 @@ them. The row grows if it needs another line, and the rows below shift down.
 - Images that are not part of the list yet (dropped loose on the canvas, or
   already on the board) join the pool first when you drop them anywhere on
   the list. Rank them from there.
-- Any board element works, not only images.
+- Only images can be ranked. Shapes, text and other board elements dropped
+  on a list are left where they land and stay out of it.
 
 ### 6. Move and resize
 
@@ -100,12 +101,8 @@ you like, then click **Update Table**: the list is redrawn in place, keeping
 its position and everything ranked in it. Items in a tier you removed drop
 down to the pool.
 
-Two more buttons unlock while a list is selected:
-
-- **Fit images to image height** rescales every ranked image to the list's
-  image height. Use it for images that arrived at another size.
-- **Send everything back to the pool** unranks every item without deleting
-  anything.
+One more button unlocks while a list is selected: **Send everything back to
+the pool** unranks every item without deleting anything.
 
 Click empty canvas to deselect, and the button goes back to **Create Table**
 so you can place another list.
@@ -124,7 +121,6 @@ so you can place another list.
 | Resize a ranked image                   | Its row re-flows once you let go                     |
 | Select a list                           | Loads it into the panel for editing                  |
 | **Update Table**                        | Redraws the selected list in place                   |
-| **Fit images to image height**          | Rescales every ranked image to one height            |
 | **Send everything back to the pool**    | Unranks everything, deletes nothing                  |
 
 ## Limits and defaults
@@ -146,5 +142,4 @@ so you can place another list.
 - Rows only redraw when their height changes, so ranking into a half-empty
   row touches nothing but the image you dragged.
 - Resizing an image with its handles is fine; the row simply flows around the
-  new size. Use **Fit images to image height** when you want everything back
-  to one uniform height.
+  new size.

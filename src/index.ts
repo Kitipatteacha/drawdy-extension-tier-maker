@@ -3,12 +3,11 @@ import { DriverModule, DriverSubscriptionEvent } from "@drawdy/driver-protocol";
 import {
   addImages,
   insertAtViewportCenter,
-  normalizeTable,
   resetTable,
   updateTable,
 } from "./actions/tables";
 import { drag } from "./actions/drag/machine";
-import { noteUpdated, reflowResized } from "./actions/reflow";
+import { noteSelection, noteUpdated, reflowResized } from "./actions/reflow";
 import { TIERMAKER_SVG } from "./panel/icon";
 import { sanitizeConfig } from "./table/config";
 import { enqueue } from "./drawdy-bridge/queue";
@@ -105,6 +104,7 @@ export const onEvent: DriverModule["onEvent"] = async (e) => {
       return;
     }
     case "subscription:scene:drawdy-element-selection": {
+      noteSelection(e.body.drawdyElementIds);
       enqueue(reflowResized);
       enqueue(() => handleSelection(e.body.drawdyElementIds));
       return;
@@ -172,11 +172,6 @@ async function handleWebviewMessage(message: WebviewToDriver): Promise<void> {
       const images = Array.isArray(message.images) ? message.images : [];
       const tableId = message.tableId ?? boundTable();
       enqueue(() => addImages(tableId, images));
-      return;
-    }
-    case "normalize": {
-      const tableId = message.tableId ?? boundTable();
-      enqueue(() => normalizeTable(tableId));
       return;
     }
     case "reset": {

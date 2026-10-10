@@ -1,6 +1,7 @@
 import {
   DrawdyElementSchema,
   SubscribedDrawdyElement,
+  UpdateableProperties,
 } from "@drawdy/driver-protocol";
 
 import {
@@ -9,7 +10,7 @@ import {
   placedOf,
   SceneTable,
 } from "../table/collect";
-import { contains, moved, PlacedItem, Point } from "../table/layout";
+import { contains, PlacedItem, Point } from "../table/layout";
 import { ITEM_LAYER, itemMeta, META_KEY, readMeta } from "../table/meta";
 import { cameraPose, restoreCamera } from "./camera";
 import { command } from "./session";
@@ -20,7 +21,14 @@ export type Scene = {
   geo: Map<string, PlacedItem>;
 };
 
-export type Move = { id: string; dx: number; dy: number };
+/** An absolute spot, and a size for parts that are resized in place. */
+export type Placement = {
+  id: string;
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+};
 
 export type Tag = { id: string; tableId: string; rowId: string | null };
 
@@ -117,49 +125,111 @@ export async function addElements(
   return added !== null;
 }
 
-export async function removeElements(ids: string[]): Promise<void> {
+async function existingIds(ids: string[]): Promise<Set<string>> {
+  const res = await command("command:scene:get-drawdy-elements", {
+    drawdyElementIds: ids,
+    properties: ["type"],
+  });
+  return new Set((res?.drawdyElements ?? []).map((element) => element.id));
+}
+
+/**
+ * Adds the elements the board doesn't have yet. Part ids come from their
+ * content, so one that is already there is this exact element, left by an
+ * earlier run or by a collaborator's driver drawing the same table. A lost
+ * race with that driver is retried once against what it added.
+ */
+export async function addMissing(
+  elements: DrawdyElementSchema[],
+): Promise<boolean> {
+  if (elements.length === 0) return true;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const have = await existingIds(
+      elements.map((element) => element.drawdyElementId),
+    );
+    const missing = elements.filter(
+      (element) => !have.has(element.drawdyElementId),
+    );
+    if (missing.length === 0) return true;
+    if (await addElements(missing)) return true;
+  }
+  return false;
+}
+
+async function removeElements(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   await command("command:scene:remove-drawdy-elements", {
     drawdyElementIds: ids,
   });
 }
 
-export async function moveElements(moves: Move[]): Promise<void> {
-  const real = moves.filter((move) => moved(move.dx, move.dy));
-  if (real.length === 0) return;
+const tagProperties = (tag: Tag): UpdateableProperties => ({
+  meta: {
+    [META_KEY]: tag.rowId === null ? null : itemMeta(tag.tableId, tag.rowId),
+  },
+  ...(tag.rowId === null ? {} : { layer: ITEM_LAYER }),
+});
 
-  const begun = await command("command:scene:begin-preview", {
-    drawdyElementIds: real.map((move) => move.id),
-  });
-  if (!begun) return;
-
-  const moving = new Set(begun.began);
-  await command("command:scene:end-preview", {
-    commits: real
-      .filter((move) => moving.has(move.id))
-      .map((move) => ({
-        drawdyElementId: move.id,
-        dx: move.dx,
-        dy: move.dy,
-        dRotation: 0,
-      })),
+/**
+ * Retags, places and resizes elements in one update. Placements are absolute, so
+ * replaying them, or a collaborator's driver landing the same layout,
+ * changes nothing.
+ */
+async function updateElements(
+  tags: Tag[],
+  placements: Placement[],
+): Promise<void> {
+  const updates = new Map<string, UpdateableProperties>();
+  for (const tag of tags) updates.set(tag.id, tagProperties(tag));
+  for (const { id, x, y, width, height } of placements) {
+    updates.set(id, {
+      ...updates.get(id),
+      transform: { x, y },
+      ...(width === undefined ? {} : { width }),
+      ...(height === undefined ? {} : { height }),
+    });
+  }
+  if (updates.size === 0) return;
+  await command("command:scene:update-drawdy-elements", {
+    updates: [...updates].map(([drawdyElementId, properties]) => ({
+      drawdyElementId,
+      properties,
+    })),
   });
 }
 
-export async function tagItems(tags: Tag[]): Promise<void> {
-  if (tags.length === 0) return;
-  await command("command:scene:update-drawdy-elements", {
-    updates: tags.map((tag) => ({
-      drawdyElementId: tag.id,
-      properties: {
-        meta: {
-          [META_KEY]:
-            tag.rowId === null ? null : itemMeta(tag.tableId, tag.rowId),
-        },
-        ...(tag.rowId === null ? {} : { layer: ITEM_LAYER }),
-      },
-    })),
-  });
+export type SceneEdit = {
+  add: DrawdyElementSchema[];
+  tags: Tag[];
+  placements: Placement[];
+  remove: string[];
+};
+
+export const emptyEdit = (): SceneEdit => ({
+  add: [],
+  tags: [],
+  placements: [],
+  remove: [],
+});
+
+export const mergeEdits = (edits: SceneEdit[]): SceneEdit => ({
+  add: edits.flatMap((edit) => edit.add),
+  tags: edits.flatMap((edit) => edit.tags),
+  placements: edits.flatMap((edit) => edit.placements),
+  remove: edits.flatMap((edit) => edit.remove),
+});
+
+/**
+ * Lands one user action on the board. Drawdy closes an undo step before
+ * every scene command, so the action is sent as at most one add, one update
+ * and one removal. Moving, resizing and retagging all ride the update, so an
+ * action that draws nothing new and deletes nothing is a single undo step.
+ */
+export async function commitEdit(edit: SceneEdit): Promise<boolean> {
+  if (edit.add.length > 0 && !(await addMissing(edit.add))) return false;
+  await updateElements(edit.tags, edit.placements);
+  await removeElements(edit.remove);
+  return true;
 }
 
 export async function selectElements(ids: string[]): Promise<void> {

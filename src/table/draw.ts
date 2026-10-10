@@ -26,11 +26,36 @@ function labelFontSize(label: string, cellWidth: number): number {
   return Math.max(11, Math.min(DEFAULTS.labelFontSize, Math.round(fits)));
 }
 
+function fnv1a(text: string, seed: number): string {
+  let hash = seed >>> 0;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+/**
+ * A part's id is a hash of everything drawn, so every driver that lays out
+ * the same table names its parts the same and a second redraw finds them
+ * already on the board instead of drawing the rows twice. A row's shapes
+ * leave their geometry out, keeping the id when the row only moves or grows,
+ * so they are moved and resized in place rather than drawn again. The title
+ * keeps it: a text box reads back at its measured size, not the one drawn.
+ */
+function partId(tableId: string, element: DrawdyElementSchema): string {
+  const { x: _x, y: _y, width: _w, height: _h, ...drawn } = element as Record<
+    string,
+    unknown
+  >;
+  const content = JSON.stringify(element.type === "text" ? element : drawn);
+  return `${tableId}_${fnv1a(content, 0x811c9dc5)}${fnv1a(content, 0x9e3779b9)}`;
+}
+
 export function buildTableElements(
   tableId: string,
   config: TableConfig,
   laid: LaidTable,
-  generateId: () => string,
 ): DrawdyElementSchema[] {
   const cfg = scalarsOf(config);
   const elements: DrawdyElementSchema[] = [];
@@ -43,7 +68,7 @@ export function buildTableElements(
     const rect = laid.titleRect;
     elements.push({
       type: "text",
-      drawdyElementId: generateId(),
+      drawdyElementId: "",
       x: rect.x,
       y: rect.y + (rect.height - DEFAULTS.titleFontSize * 1.25) / 2,
       width: rect.width,
@@ -62,7 +87,7 @@ export function buildTableElements(
     elements.push({
       type: "shape",
       componentType: "rect",
-      drawdyElementId: generateId(),
+      drawdyElementId: "",
       ...row.bodyRect,
       fillColor: SKIN.body,
       strokeColor: SKIN.line,
@@ -77,7 +102,7 @@ export function buildTableElements(
     elements.push({
       type: "shape",
       componentType: "rect",
-      drawdyElementId: generateId(),
+      drawdyElementId: "",
       ...row.labelRect,
       fillColor: row.color ?? SKIN.body,
       strokeColor: SKIN.line,
@@ -96,7 +121,10 @@ export function buildTableElements(
     });
   }
 
-  return elements;
+  return elements.map((element) => ({
+    ...element,
+    drawdyElementId: partId(tableId, element),
+  }));
 }
 
 export function looseImageElement(

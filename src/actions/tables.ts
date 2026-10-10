@@ -5,17 +5,15 @@ import {
   scanScene,
   selectElements,
   Tag,
-  tagItems,
   targetTable,
 } from "../drawdy-bridge/scene";
 import { viewportRect } from "../drawdy-bridge/camera";
-import { newElementId, post, status } from "../drawdy-bridge/session";
+import { newElementId, status } from "../drawdy-bridge/session";
 import { SceneTable } from "../table/collect";
 import { DEFAULTS, POOL_ROW_ID, TableConfig } from "../table/config";
 import { buildTableElements, looseImageElement } from "../table/draw";
 import {
   layoutTable,
-  near,
   PlacedItem,
   Point,
   Rect,
@@ -44,7 +42,7 @@ async function insertTable(next: TableConfig, origin: Point): Promise<void> {
   const tableId = `t_${newElementId()}`;
   const laid = layoutTable(next, origin, new Map());
   if (
-    !(await addElements(buildTableElements(tableId, next, laid, newElementId)))
+    !(await addElements(buildTableElements(tableId, next, laid)))
   ) {
     status("The board refused the tier list.", "error");
     return;
@@ -88,11 +86,12 @@ export async function updateTable(
     itemsByRow.set(target, [...(itemsByRow.get(target) ?? []), ...items]);
   }
 
-  await tagItems(retags);
-  const drawn = await redrawTable(table, itemsByRow, {
-    config: next,
-    force: true,
-  });
+  const drawn = await redrawTable(
+    table,
+    itemsByRow,
+    { config: next },
+    retags,
+  );
   if (!drawn) return;
 
   await selectElements(drawn.partIds);
@@ -243,57 +242,6 @@ export async function addImages(
   );
 }
 
-export async function normalizeTable(tableId: string | null): Promise<void> {
-  const aimed = await aimAt(tableId, "Select the tier list to tidy up.");
-  if (!aimed) return;
-  const { scene, table } = aimed;
-  const { itemHeight } = table.config;
-
-  const kinds = new Map(scene.elements.map((el) => [el.id, el.type]));
-  const wrong = new Set(
-    [...table.items.values()]
-      .flat()
-      .filter(
-        (item) =>
-          kinds.get(item.id) === "image" && !near(item.height, itemHeight),
-      )
-      .map((item) => item.id),
-  );
-  if (wrong.size === 0) {
-    status("Every image is already the right size.");
-    return;
-  }
-
-  // Same image, same spot in its row, just the right height. The redraw
-  // sends every new size and every neighbour shift in one update, so the
-  // whole tidy-up is a single undo step.
-  const fitted = (item: PlacedItem): PlacedItem => ({
-    ...item,
-    width: (item.height > 0 ? item.width / item.height : 1) * itemHeight,
-    height: itemHeight,
-  });
-  const itemsByRow = new Map<string, PlacedItem[]>();
-  for (const [rowId, items] of table.items) {
-    itemsByRow.set(
-      rowId,
-      items.map((item) => (wrong.has(item.id) ? fitted(item) : item)),
-    );
-  }
-
-  post({ type: "busy", busy: true });
-  try {
-    const drawn = await redrawTable(table, itemsByRow);
-    status(
-      drawn
-        ? `Resized ${wrong.size} image${wrong.size === 1 ? "" : "s"}.`
-        : "The board refused the resize.",
-      drawn ? "info" : "error",
-    );
-  } finally {
-    post({ type: "busy", busy: false });
-  }
-}
-
 export async function resetTable(tableId: string | null): Promise<void> {
   const aimed = await aimAt(tableId, "Select the tier list to clear.");
   if (!aimed) return;
@@ -311,10 +259,9 @@ export async function resetTable(tableId: string | null): Promise<void> {
     return;
   }
 
-  await tagItems(retags);
   const pooled = [...table.items.values()].flat();
   const itemsByRow = new Map([[POOL_ROW_ID, pooled]]);
-  await redrawTable(table, itemsByRow);
+  await redrawTable(table, itemsByRow, {}, retags);
   postCounts(table.tableId, itemsByRow);
   status(
     `Sent ${retags.length} item${retags.length === 1 ? "" : "s"} back to the pool.`,

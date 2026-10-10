@@ -13,7 +13,6 @@ export type WebviewToDriver =
   | { type: "insert"; config: TableConfig }
   | { type: "update"; tableId: string; config: TableConfig }
   | { type: "add-images"; tableId: string | null; images: IncomingImage[] }
-  | { type: "normalize"; tableId: string }
   | { type: "reset"; tableId: string }
   | { type: "save-config"; config: TableConfig };
 
@@ -28,8 +27,7 @@ export type DriverToWebview =
     }
   | { type: "edit-cleared" }
   | { type: "counts"; tableId: string; counts: Record<string, number> }
-  | { type: "status"; text: string; tone: "info" | "error" }
-  | { type: "busy"; busy: boolean };
+  | { type: "status"; text: string; tone: "info" | "error" };
 
 export const MAX_IMAGES_PER_BATCH = 60;
 export const MAX_IMAGE_BYTES = 16 * 1024 * 1024;
