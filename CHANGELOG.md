@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1
 
 - Only images can be ranked. Other board elements dropped on a list are no
   longer pulled into its pool.
